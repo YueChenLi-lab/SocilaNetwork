@@ -28,8 +28,7 @@ public class TestCase456 {
 
         System.out.println("# 需求(4)下半测试：1个中间人扩展联络范围         #");
 
-        //photoshop直接联系人只有1人(css)，但通过css这个中间人，能联络到的人数会大幅增加
-        //这是最有说服力的案例：证明"少量直接联系人，也能通过1次转介触达一大片人"
+        //photoshop 直接联系 css，通过 css 新增触达 jquery 和 html；只说明图上的可达性。
         NetworkAnalyzer.printOneIntermediaryReachable(graph, photoshopIdx);
 
         System.out.println();
@@ -49,8 +48,8 @@ public class TestCase456 {
         int farPersonIdx = graph.findIndexByName("haskell");
 
         //把drupal搬到jquery附近（半径15以内）
-        graph.vexs[nearPersonIdx].setX(refX + 5);
-        graph.vexs[nearPersonIdx].setY(refY + 5);
+        graph.vexs[nearPersonIdx].setX(Math.min(100, refX + 5));
+        graph.vexs[nearPersonIdx].setY(Math.min(100, refY + 5));
 
         //把haskell搬到离jquery尽量远的角落（0~100坐标范围内，取跟(refX,refY)欧氏距离更大的那个对角）
         double farX = (refX < 50) ? 100 : 0;

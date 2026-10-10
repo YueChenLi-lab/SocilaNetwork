@@ -298,7 +298,7 @@ public class ApiServer {
             String radStr = getParam(query, "radius");
 
             int idx = graph.findIndexByName(name);
-            if (idx == -1 || radStr == null) {
+            if (idx == -1) {
                 sendJson(exchange, "{\"found\": false}");
                 return;
             }
