@@ -1,26 +1,22 @@
-
-//Web 服务的启动入口
 import java.io.IOException;
 
+/** Start from the repository root: WebMain [csv-path] [port]. */
 public class WebMain {
     public static void main(String[] args) {
         try {
-            // 1. 初始化你的图数据 (保留你原来的逻辑)
-            String fileName = "D:/Desktop/stackoverflow_edges.csv";
+            String fileName = args.length > 0 ? args[0] : "data/sample_edges.csv";
+            int port = args.length > 1 ? Integer.parseInt(args[1]) : 8080;
             MatGraphClass graph = GraphLoader.readCSV(fileName);
-
-            // 2. 提前计算度数分类 (供前端需求5使用)
-            int[] degrees = NetworkAnalyzer.computeDegree(graph);
-
-            // 3. 启动 API 服务器，监听 8080 端口
-            ApiServer server = new ApiServer(8080, graph, degrees);
+            ApiServer server = new ApiServer(port, graph, NetworkAnalyzer.computeDegree(graph));
             server.start();
-
             System.out.println("SOCIAL·NET 服务器已启动！");
-            System.out.println("请在浏览器中访问: http://localhost:8080/");
-
-        } catch (IOException e) {
-            System.out.println("数据加载失败或端口被占用：" + e.getMessage());
+            System.out.println("数据：" + fileName + "；节点：" + graph.n + "；无向关系：" + graph.e / 2);
+            System.out.println("坐标为可复现的模拟值，拖动修改仅保存在本次运行内。");
+            System.out.println("请在浏览器中访问: http://localhost:" + server.getPort() + "/");
+        } catch (IOException | IllegalArgumentException e) {
+            System.err.println("启动失败：" + e.getMessage());
+            System.err.println("用法：java -cp out WebMain [CSV路径] [端口]（在项目根目录运行）");
+            System.exit(1);
         }
     }
 }

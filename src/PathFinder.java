@@ -2,6 +2,9 @@ public class PathFinder {
 
     //BFS找最短路径
     public static int[] findShortestPath(MatGraphClass g,int start,int end){
+        if (start < 0 || end < 0 || start >= g.n || end >= g.n) {
+            throw new IllegalArgumentException("起点和终点必须是有效顶点");
+        }
         int[] visited=new int[g.n];//防止重复走
         int[] pre=new int[g.n];//记录上一个走过的是啥元素的数组，靠这个反推整条路
         //用数组模拟队列，每个顶点最多入队一次，因此长度为g.n

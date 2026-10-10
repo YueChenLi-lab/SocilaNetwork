@@ -1,16 +1,20 @@
-//针对需求(4)(5)(6)的演示/测试类，用真实stackoverflow_edges.csv数据
+//针对需求(4)(5)(6)的演示类，默认使用仓库内人工构造的示例数据
 //坐标部分做了"人为可控"的处理，保证结果可复现、有说服力
 public class TestCase456 {
 
     public static void main(String[] args) throws Exception {
 
-        MatGraphClass graph = GraphLoader.readCSV("D:/Desktop/stackoverflow_edges.csv");
+        MatGraphClass graph = GraphLoader.readCSV(args.length > 0 ? args[0] : "data/sample_edges.csv");
 
         System.out.println("# 需求(6)测试：交往圈子对比（枢纽 vs 边缘节点） #");
 
-        //jquery是度数最高的枢纽节点，photoshop是度数最低(=1)的边缘节点，形成强烈对比
+        //示例中 jquery 有5个直接联系人，photoshop 只有1个，便于比较。
         int jqueryIdx = graph.findIndexByName("jquery");
         int photoshopIdx = graph.findIndexByName("photoshop");
+        if (jqueryIdx < 0 || photoshopIdx < 0 || graph.findIndexByName("drupal") < 0 || graph.findIndexByName("haskell") < 0) {
+            System.out.println("此演示需要 jquery、photoshop、drupal、haskell；可使用 data/sample_edges.csv");
+            return;
+        }
         NetworkAnalyzer.printSocialCircle(graph, jqueryIdx);
         NetworkAnalyzer.printSocialCircle(graph, photoshopIdx);
 
