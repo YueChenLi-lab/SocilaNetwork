@@ -13,10 +13,30 @@
     move: function (name, x, y) { return "/api/move?name=" + encodeURIComponent(name) + "&x=" + x + "&y=" + y; }
   };
 
+  let backendConnected = false, connectionRequest = 0;
   async function getJson(url, opts) {
-    const res = await fetch(url, opts);
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    return res.json();
+    const request = ++connectionRequest;
+    const controller = new AbortController();
+    const timeout = setTimeout(function () { controller.abort(); }, 10000);
+    try {
+      const res = await fetch(url, Object.assign({}, opts, { signal: controller.signal }));
+      if (request === connectionRequest) backendConnected = true;
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.reason || ("HTTP " + res.status));
+      return data;
+    } catch (err) {
+      if (err.name === "AbortError" || err instanceof TypeError) {
+        if (request === connectionRequest) backendConnected = false;
+        throw new Error("服务无响应，请确认 Java 服务正在运行后重试");
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeout);
+      renderStatusbar();
+    }
+  }
+  function panelError(box, err) {
+    box.textContent = "查询失败：" + err.message + "。请重试。";
   }
 
   let nodes = [];      // 由 /api/graph 填充：{id,name,degree,cls,geoX,geoY,x,y,vx,vy,pinned,circleEl,labelEl}
@@ -37,7 +57,7 @@
       nodes[n.id] = {
         id: n.id, name: n.name, degree: n.degree, cls: n.cls,
         geoX: n.x, geoY: n.y, x: 0, y: 0, vx: 0, vy: 0,
-        pinned: false, neighbors: [], circleEl: null, labelEl: null
+        pinned: false, saving: false, neighbors: [], circleEl: null, labelEl: null
       };
       nameToId[n.name] = n.id;
     });
@@ -133,10 +153,11 @@
      4. 简易力导向布局（纯前端视觉排布，跟后端算法无关）
      ============================================================ */
   let mode = "topo";
-  let alpha = 1, simRunning = false;
+  let alpha = 1, simRunning = false, simFrame = null;
   const REPULSE_K = 2600, SPRING_L = 78, SPRING_K = 0.02, CENTER_K = 0.006, DAMP = 0.82, MAX_SPEED = 18;
 
   function forceTick() {
+    simFrame = null;
     if (mode !== "topo" || !simRunning) return;
     const cx = VB_W / 2, cy = VB_H / 2;
     const ax = new Array(N).fill(0), ay = new Array(N).fill(0);
@@ -180,28 +201,28 @@
 
     alpha *= 0.992;
     if (alpha < 0.01 && maxV < 0.02) { simRunning = false; return; }
-    requestAnimationFrame(forceTick);
+    simFrame = requestAnimationFrame(forceTick);
   }
-  function wakeSim() { if (mode === "topo") { alpha = 1; if (!simRunning) { simRunning = true; requestAnimationFrame(forceTick); } } }
-
-  function tweenTo(nd, tx, ty, dur) {
-    const sx = nd.x, sy = nd.y, st = performance.now();
-    function step(now) {
-      let t = Math.min(1, (now - st) / dur);
-      let e = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-      nd.x = sx + (tx - sx) * e;
-      nd.y = sy + (ty - sy) * e;
-      updateNodeVisual(nd);
-      if (t < 1) requestAnimationFrame(step);
+  function wakeSim() {
+    if (mode === "topo") {
+      alpha = 1; simRunning = true;
+      if (simFrame === null) simFrame = requestAnimationFrame(forceTick);
     }
-    requestAnimationFrame(step);
+  }
+  function stopSim() {
+    simRunning = false;
+    if (simFrame !== null) cancelAnimationFrame(simFrame);
+    simFrame = null;
   }
 
   /* ============================================================
      5. 缩放 / 平移
      ============================================================ */
   let tx = 0, ty = 0, scale = 1;
-  function applyTransform() { viewport.setAttribute("transform", "translate(" + tx + "," + ty + ") scale(" + scale + ")"); }
+  function applyTransform() {
+    viewport.setAttribute("transform", "translate(" + tx + "," + ty + ") scale(" + scale + ")");
+    renderStatusbar();
+  }
   function toViewBoxPoint(clientX, clientY) {
     // Respect SVG letterboxing at any browser size.
     const point = svg.createSVGPoint();
@@ -220,18 +241,19 @@
     zoomAt(p.x, p.y, e.deltaY < 0 ? 1.12 : 0.89);
   }, { passive: false });
 
-  let panning = false, panStart = null, dragMoved = false;
+  let panning = false, panStart = null, panOrigin = null, dragMoved = false;
   svg.addEventListener("mousedown", function (e) {
-    if (e.target.tagName === "circle") return;
+    if (e.button !== 0 || e.target.tagName === "circle") return;
     panning = true; dragMoved = false;
     panStart = toViewBoxPoint(e.clientX, e.clientY);
+    panOrigin = { x: e.clientX, y: e.clientY };
     svg.classList.add("dragging");
   });
   window.addEventListener("mousemove", function (e) {
     if (!panning) return;
     const p = toViewBoxPoint(e.clientX, e.clientY);
     tx += p.x - panStart.x; ty += p.y - panStart.y;
-    dragMoved = dragMoved || Math.abs(p.x - panStart.x) + Math.abs(p.y - panStart.y) > 1;
+    dragMoved = dragMoved || Math.hypot(e.clientX - panOrigin.x, e.clientY - panOrigin.y) > 3;
     panStart = p;
     applyTransform();
   });
@@ -251,16 +273,20 @@
         地理视图下拖动 = 调用后端 POST /api/move 真实修改Vertex坐标
         （对应需求(4)：位置动态变化 -> 后端Vertex.setX/setY被真实调用）
      ============================================================ */
-  let dragNode = null, dragLastClient = null, nodeDragMoved = false;
+  let dragNode = null, dragLastClient = null, dragOrigin = null, dragOriginal = null, nodeDragMoved = false;
   function startNodeDrag(nd, e) {
+    if (e.button !== 0) return;
     e.stopPropagation();
+    e.preventDefault();
+    if (nd.saving) return; // Do not send overlapping position writes for one node.
     dragNode = nd; dragLastClient = { x: e.clientX, y: e.clientY }; nodeDragMoved = false;
+    dragOrigin = dragLastClient;
+    dragOriginal = { geoX: nd.geoX, geoY: nd.geoY, x: nd.x, y: nd.y };
     nd.pinned = true;
   }
   window.addEventListener("mousemove", function (e) {
     if (!dragNode) return;
-    const dxScreen = e.clientX - dragLastClient.x, dyScreen = e.clientY - dragLastClient.y;
-    if (Math.abs(dxScreen) > 1 || Math.abs(dyScreen) > 1) nodeDragMoved = true;
+    if (Math.hypot(e.clientX - dragOrigin.x, e.clientY - dragOrigin.y) > 3) nodeDragMoved = true;
     const before = toViewBoxPoint(dragLastClient.x, dragLastClient.y);
     const after = toViewBoxPoint(e.clientX, e.clientY);
     const dx = (after.x - before.x) / scale;
@@ -281,17 +307,35 @@
       dragNode.pinned = false;
       const moved = nodeDragMoved;
       const nd = dragNode;
+      const original = dragOriginal;
       dragNode = null;
 
       if (!moved) {
+        nd.geoX = original.geoX; nd.geoY = original.geoY;
+        nd.x = original.x; nd.y = original.y;
+        updateNodeVisual(nd);
         selectNode(nd.id);
       } else if (mode === "geo") {
         // Update Java memory for this run; no disk persistence is implied.
+        nd.saving = true;
+        nd.circleEl.style.cursor = "wait";
+        const feedback = document.getElementById("moveStatus");
+        feedback.textContent = "正在保存 " + nd.name + " 的模拟位置…";
         try {
-          await getJson(API.move(nd.name, nd.geoX.toFixed(3), nd.geoY.toFixed(3)), { method: "POST" });
+          nd.geoX = Number(nd.geoX.toFixed(3)); nd.geoY = Number(nd.geoY.toFixed(3));
+          const result = await getJson(API.move(nd.name, nd.geoX, nd.geoY), { method: "POST" });
+          if (!result.success) throw new Error("服务未确认位置更新");
+          feedback.textContent = nd.name + " 的模拟位置已保存到本次运行，附近列表已重新查询；重启后恢复初始值。";
+          if (selectedId !== null) refreshNearbyPanel();
+        } catch (err) {
+          nd.geoX = original.geoX; nd.geoY = original.geoY;
+          feedback.textContent = "位置保存失败，已恢复上次确认的显示位置：" + err.message + "。可刷新页面重新核对服务端状态。";
+        } finally {
+          nd.saving = false;
+          nd.circleEl.style.cursor = "pointer";
+          if (mode === "geo") { const p = geoToSvg(nd); nd.x = p.x; nd.y = p.y; updateNodeVisual(nd); }
           if (selectedId === nd.id) renderDetail();
-        } catch (err) { showConnError(); }
-        if (selectedId !== null) refreshNearbyPanel();
+        }
       }
       wakeSim();
       return;
@@ -307,8 +351,9 @@
       btn.classList.add("active");
       mode = btn.dataset.view;
       if (mode === "geo") {
-        simRunning = false;
-        nodes.forEach(function (nd) { const p = geoToSvg(nd); tweenTo(nd, p.x, p.y, 550); });
+        stopSim();
+        // Switch immediately: no old tween can overwrite a later drag or view.
+        nodes.forEach(function (nd) { const p = geoToSvg(nd); nd.x = p.x; nd.y = p.y; updateNodeVisual(nd); });
       } else {
         wakeSim();
       }
@@ -323,6 +368,7 @@
   let selectedId = null;
   let pathEdgeKeys = new Set();
   let pathNodeIds = new Set();
+  let pathRequest = 0, circleRequest = 0;
 
   function refreshEdgeStyles() {
     edges.forEach(function (e) {
@@ -360,7 +406,7 @@
 
   async function selectNode(id, keepPath) {
     selectedId = id;
-    if (!keepPath) { pathEdgeKeys = new Set(); pathNodeIds = new Set(); document.getElementById("pathResult").innerHTML = ""; }
+    if (!keepPath) { ++pathRequest; pathEdgeKeys = new Set(); pathNodeIds = new Set(); document.getElementById("pathResult").innerHTML = ""; }
     refreshEdgeStyles();
     renderDetail();
     updateScanRing();
@@ -368,6 +414,7 @@
     await Promise.all([renderCircle(), refreshNearbyPanel()]);
   }
   function clearSelection() {
+    ++pathRequest; ++circleRequest; ++nearbyRequest;
     selectedId = null; pathEdgeKeys = new Set(); pathNodeIds = new Set();
     refreshEdgeStyles();
     document.getElementById("detailBody").innerHTML = '<span class="empty">点击图中任意节点查看详情</span>';
@@ -383,19 +430,23 @@
     const nd = nodes[selectedId];
     document.getElementById("detailBody").innerHTML =
       '<div class="kv"><span class="k">名称</span><span class="v">' + escapeHtml(nd.name) + '</span></div>' +
-      '<div class="kv"><span class="k">地理坐标</span><span class="v">(' + nd.geoX.toFixed(2) + ', ' + nd.geoY.toFixed(2) + ')</span></div>' +
+      '<div class="kv"><span class="k">模拟坐标</span><span class="v">(' + nd.geoX.toFixed(2) + ', ' + nd.geoY.toFixed(2) + ')</span></div>' +
       '<div class="kv"><span class="k">度数</span><span class="v">' + nd.degree + '</span></div>' +
       '<div class="kv"><span class="k">分类</span><span class="v"><span class="badge ' + clsBadgeClass(nd.cls) + '">' + clsLabel(nd.cls) + '</span></span></div>';
   }
 
   /* ---- 需求(6)：交往圈子 -> 调用 GET /api/circle ---- */
   async function renderCircle() {
+    const request = ++circleRequest;
     const nd = nodes[selectedId];
     const box = document.getElementById("circleBody");
     box.innerHTML = '<span class="empty">正在向后端查询…</span>';
     let data;
-    try { data = await getJson(API.circle(nd.name)); } catch (e) { showConnError(); return; }
-    if (selectedId !== nd.id) return;
+    try { data = await getJson(API.circle(nd.name)); } catch (e) {
+      if (request === circleRequest && selectedId === nd.id) panelError(box, e);
+      return;
+    }
+    if (request !== circleRequest || selectedId !== nd.id) return;
     if (!data.found || data.circle.length === 0) { box.innerHTML = '<span class="empty">该节点没有直接联系人</span>'; return; }
     box.innerHTML = '<div class="kv"><span class="k">直接联系人</span><span class="v">' + data.circle.length + ' 人</span></div>' +
       '<div class="taglist">' + data.circle.map(function (name) { return tagHtml(name); }).join("") + '</div>';
@@ -412,7 +463,10 @@
     const r = parseInt(document.getElementById("radiusSlider").value, 10);
     box.innerHTML = '<span class="empty">正在向后端查询…</span>';
     let data;
-    try { data = await getJson(API.nearby(nd.name, r)); } catch (e) { showConnError(); return; }
+    try { data = await getJson(API.nearby(nd.name, r)); } catch (e) {
+      if (request === nearbyRequest && selectedId === nd.id) panelError(box, e);
+      return;
+    }
     if (request !== nearbyRequest || selectedId !== nd.id) return;
     if (!data.found) { box.innerHTML = '<span class="empty">查询失败</span>'; return; }
 
@@ -464,18 +518,27 @@
   });
   document.getElementById("radiusSlider").addEventListener("input", function () {
     document.getElementById("radiusVal").textContent = this.value;
+    updateScanRing();
     refreshNearbyPanel();
   });
+  document.getElementById("btnRefreshNearby").addEventListener("click", refreshNearbyPanel);
 
   /* ---- 需求(3)：最短路径查询 -> 调用 GET /api/path ---- */
   document.getElementById("btnPath").addEventListener("click", async function () {
+    const request = ++pathRequest;
     const nameA = document.getElementById("pathA").value.trim();
     const nameB = document.getElementById("pathB").value.trim();
     const box = document.getElementById("pathResult");
+    pathEdgeKeys.clear(); pathNodeIds.clear(); refreshEdgeStyles();
+    if (!nameA || !nameB) { box.textContent = "请填写起点和终点名称"; return; }
     box.innerHTML = '<span class="empty">正在向后端查询…</span>';
 
     let data;
-    try { data = await getJson(API.path(nameA, nameB)); } catch (e) { showConnError(); return; }
+    try { data = await getJson(API.path(nameA, nameB)); } catch (e) {
+      if (request === pathRequest) panelError(box, e);
+      return;
+    }
+    if (request !== pathRequest) return;
 
     if (!data.found) {
       box.innerHTML = '<span class="empty">' + (data.reason === "name_not_found" ? "名字不存在，请检查拼写（可从下拉列表中选择）" : "两个人一点关系没有（网络中不连通）") + '</span>';
@@ -499,11 +562,17 @@
     bindTagClicks(box);
     await selectNode(path[0], true);
   });
+  ["pathA", "pathB"].forEach(function (id) {
+    document.getElementById(id).addEventListener("input", function () {
+      ++pathRequest; pathEdgeKeys.clear(); pathNodeIds.clear(); refreshEdgeStyles();
+      document.getElementById("pathResult").textContent = "输入已变更，请重新查询";
+    });
+  });
 
   /* ---- 需求(5)：核心/活跃/边缘统计 -> 调用 GET /api/classify ---- */
   async function renderStats() {
     let data;
-    try { data = await getJson(API.classify); } catch (e) { showConnError(); return; }
+    try { data = await getJson(API.classify); } catch (e) { panelError(document.getElementById("statGrid"), e); return; }
     document.getElementById("statGrid").innerHTML =
       '<div class="statcell"><div class="n" style="color:var(--copper)">' + data.core.length + '</div><div class="l">核心</div></div>' +
       '<div class="statcell"><div class="n" style="color:var(--cyan)">' + data.active.length + '</div><div class="l">活跃</div></div>' +
@@ -527,12 +596,12 @@
   }
 
   function renderStatusbar() {
-    const modeLabel = mode === "topo" ? "拓扑视图" : "地理视图";
+    const modeLabel = mode === "topo" ? "拓扑视图" : "模拟位置视图";
     const sel = selectedId !== null ? nodes[selectedId].name : "无";
     document.getElementById("statusbar").innerHTML =
       "<b>节点</b> " + N + " &nbsp; <b>关系</b> " + edges.length +
       " &nbsp; <b>视图</b> " + modeLabel + " &nbsp; <b>缩放</b> " + scale.toFixed(2) + "x &nbsp; <b>选中</b> " + escapeHtml(sel) +
-      " &nbsp; <b style='color:var(--teal)'>● 已连接后端</b>";
+      " &nbsp; <b>" + (backendConnected ? "● 已连接后端" : "● 服务未响应，请重试") + "</b>";
   }
 
   function showConnError() {
@@ -545,6 +614,7 @@
   document.addEventListener("keydown", function (e) {
     if (e.target.tagName === "INPUT") {
       if (e.key === "Escape") e.target.blur();
+      if (e.key === "Enter" && (e.target.id === "pathA" || e.target.id === "pathB")) document.getElementById("btnPath").click();
       return;
     }
     switch (e.key) {
@@ -557,6 +627,7 @@
       case "Escape": clearSelection(); resetView(); break;
       case "/": e.preventDefault(); document.getElementById("pathA").focus(); break;
     }
+    if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "+", "=", "-", "Escape"].includes(e.key)) e.preventDefault();
   });
 
   /* ============================================================
