@@ -1,6 +1,6 @@
 public class MatGraphClass{
     final int MAXV=500;//最大顶点数
-    final int INF=0x3f3f3f3f;
+    static final int INF=0x3f3f3f3f;
     int[][] edges;//邻接矩阵
     int n,e;//顶点 边数
     Vertex[] vexs;
@@ -24,7 +24,7 @@ public class MatGraphClass{
     //⑥ 图建立完成
     public MatGraphClass(Vertex[] v, TupElem[] tup){
         n=v.length;
-        e=2*tup.length;
+        e=0; // Each unique undirected relation adds two matrix entries.
         vexs=new Vertex[n];
         edges=new int[n][n];
         for(int i=0;i<n;i++){
@@ -42,8 +42,13 @@ public class MatGraphClass{
             int r=tup[i].r;
             int c=tup[i].c;
             int d=tup[i].d;
-            edges[r][c]=d;
-            edges[c][r]=d;        }
+            if (r == c || r < 0 || c < 0 || r >= n || c >= n || d <= 0 || d >= INF) {
+                throw new IllegalArgumentException("边必须连接两个有效顶点，且权重在 [1, INF) 内");
+            }
+            if (edges[r][c] == INF) e += 2;
+            edges[r][c]=Math.min(edges[r][c], d);
+            edges[c][r]=edges[r][c];
+        }
     }
     //(这一段是ai加的)用于支持"输入任意两个人的名字"这类需求，避免只能用硬编码下标
     //查找名字下标，找到了返回对应数组下标，找不到就返回-1

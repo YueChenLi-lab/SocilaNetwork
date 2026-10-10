@@ -22,7 +22,7 @@
   let nodes = [];      // 由 /api/graph 填充：{id,name,degree,cls,geoX,geoY,x,y,vx,vy,pinned,circleEl,labelEl}
   let edges = [];      // {a,b,lineEl}
   let edgeByKey = {};
-  let nameToId = {};
+  let nameToId = Object.create(null);
   let N = 0;
 
   /* ============================================================
@@ -30,6 +30,7 @@
      ============================================================ */
   async function loadGraph() {
     const data = await getJson(API.graph);
+    nameToId = Object.create(null);
     N = data.nodes.length;
     nodes = new Array(N);
     data.nodes.forEach(function (n) {
@@ -202,8 +203,10 @@
   let tx = 0, ty = 0, scale = 1;
   function applyTransform() { viewport.setAttribute("transform", "translate(" + tx + "," + ty + ") scale(" + scale + ")"); }
   function toViewBoxPoint(clientX, clientY) {
-    const rect = svg.getBoundingClientRect();
-    return { x: (clientX - rect.left) / rect.width * VB_W, y: (clientY - rect.top) / rect.height * VB_H };
+    // Respect SVG letterboxing at any browser size.
+    const point = svg.createSVGPoint();
+    point.x = clientX; point.y = clientY;
+    return point.matrixTransform(svg.getScreenCTM().inverse());
   }
   function zoomAt(px, py, factor) {
     const newScale = Math.min(4, Math.max(0.25, scale * factor));
@@ -227,8 +230,9 @@
   window.addEventListener("mousemove", function (e) {
     if (!panning) return;
     const p = toViewBoxPoint(e.clientX, e.clientY);
-    tx += (p.x - panStart.x) * scale; ty += (p.y - panStart.y) * scale;
-    dragMoved = true;
+    tx += p.x - panStart.x; ty += p.y - panStart.y;
+    dragMoved = dragMoved || Math.abs(p.x - panStart.x) + Math.abs(p.y - panStart.y) > 1;
+    panStart = p;
     applyTransform();
   });
   window.addEventListener("mouseup", function () {
@@ -255,17 +259,20 @@
   }
   window.addEventListener("mousemove", function (e) {
     if (!dragNode) return;
-    const rect = svg.getBoundingClientRect();
     const dxScreen = e.clientX - dragLastClient.x, dyScreen = e.clientY - dragLastClient.y;
     if (Math.abs(dxScreen) > 1 || Math.abs(dyScreen) > 1) nodeDragMoved = true;
-    const dx = dxScreen / rect.width * VB_W / scale;
-    const dy = dyScreen / rect.height * VB_H / scale;
+    const before = toViewBoxPoint(dragLastClient.x, dragLastClient.y);
+    const after = toViewBoxPoint(e.clientX, e.clientY);
+    const dx = (after.x - before.x) / scale;
+    const dy = (after.y - before.y) / scale;
     dragLastClient = { x: e.clientX, y: e.clientY };
     dragNode.x += dx; dragNode.y += dy;
 
     if (mode === "geo") {
       dragNode.geoX = Math.min(100, Math.max(0, (dragNode.x - PADX) / SCALE_X));
       dragNode.geoY = Math.min(100, Math.max(0, (dragNode.y - PADY) / SCALE_Y));
+      const bounded = geoToSvg(dragNode);
+      dragNode.x = bounded.x; dragNode.y = bounded.y;
     }
     updateNodeVisual(dragNode);
   });
@@ -279,9 +286,10 @@
       if (!moved) {
         selectNode(nd.id);
       } else if (mode === "geo") {
-        // 真正调用后端接口持久化这次"搬家"
+        // Update Java memory for this run; no disk persistence is implied.
         try {
           await getJson(API.move(nd.name, nd.geoX.toFixed(3), nd.geoY.toFixed(3)), { method: "POST" });
+          if (selectedId === nd.id) renderDetail();
         } catch (err) { showConnError(); }
         if (selectedId !== null) refreshNearbyPanel();
       }
@@ -330,10 +338,16 @@
     });
   }
 
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, function (ch) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch];
+    });
+  }
+
   function tagHtml(name, colorClass) {
     const id = nameToId[name];
     const cls = "tag" + (colorClass ? " " + colorClass : "");
-    return '<span class="' + cls + '" data-id="' + id + '">' + name + "</span>";
+    return '<span class="' + cls + '" data-id="' + id + '">' + escapeHtml(name) + "</span>";
   }
   function bindTagClicks(container) {
     container.querySelectorAll(".tag[data-id]").forEach(function (el) {
@@ -368,7 +382,7 @@
   function renderDetail() {
     const nd = nodes[selectedId];
     document.getElementById("detailBody").innerHTML =
-      '<div class="kv"><span class="k">名称</span><span class="v">' + nd.name + '</span></div>' +
+      '<div class="kv"><span class="k">名称</span><span class="v">' + escapeHtml(nd.name) + '</span></div>' +
       '<div class="kv"><span class="k">地理坐标</span><span class="v">(' + nd.geoX.toFixed(2) + ', ' + nd.geoY.toFixed(2) + ')</span></div>' +
       '<div class="kv"><span class="k">度数</span><span class="v">' + nd.degree + '</span></div>' +
       '<div class="kv"><span class="k">分类</span><span class="v"><span class="badge ' + clsBadgeClass(nd.cls) + '">' + clsLabel(nd.cls) + '</span></span></div>';
@@ -381,6 +395,7 @@
     box.innerHTML = '<span class="empty">正在向后端查询…</span>';
     let data;
     try { data = await getJson(API.circle(nd.name)); } catch (e) { showConnError(); return; }
+    if (selectedId !== nd.id) return;
     if (!data.found || data.circle.length === 0) { box.innerHTML = '<span class="empty">该节点没有直接联系人</span>'; return; }
     box.innerHTML = '<div class="kv"><span class="k">直接联系人</span><span class="v">' + data.circle.length + ' 人</span></div>' +
       '<div class="taglist">' + data.circle.map(function (name) { return tagHtml(name); }).join("") + '</div>';
@@ -388,7 +403,9 @@
   }
 
   /* ---- 需求(4)：附近信号 + 1个中间人可达 -> 调用 GET /api/nearby ---- */
+  let nearbyRequest = 0;
   async function refreshNearbyPanel() {
+    const request = ++nearbyRequest;
     const box = document.getElementById("nearbyBody");
     if (selectedId === null) { box.innerHTML = '<span class="empty">先在图中选中一个节点</span>'; return; }
     const nd = nodes[selectedId];
@@ -396,6 +413,7 @@
     box.innerHTML = '<span class="empty">正在向后端查询…</span>';
     let data;
     try { data = await getJson(API.nearby(nd.name, r)); } catch (e) { showConnError(); return; }
+    if (request !== nearbyRequest || selectedId !== nd.id) return;
     if (!data.found) { box.innerHTML = '<span class="empty">查询失败</span>'; return; }
 
     box.innerHTML =
@@ -413,28 +431,30 @@
     if (!scanOn || selectedId === null || mode !== "geo") return;
     const nd = nodes[selectedId];
     const r = parseInt(document.getElementById("radiusSlider").value, 10);
-    const svgR = r * (SCALE_X + SCALE_Y) / 2;
+    const rx = r * SCALE_X, ry = r * SCALE_Y;
 
-    const staticRing = document.createElementNS(NS, "circle");
+    const staticRing = document.createElementNS(NS, "ellipse");
     staticRing.setAttribute("cx", nd.x); staticRing.setAttribute("cy", nd.y);
-    staticRing.setAttribute("r", svgR);
+    staticRing.setAttribute("rx", rx); staticRing.setAttribute("ry", ry);
     staticRing.setAttribute("fill", "rgba(89,230,176,0.05)");
     staticRing.setAttribute("stroke", "var(--teal)");
     staticRing.setAttribute("stroke-width", "1");
     staticRing.setAttribute("stroke-dasharray", "4 3");
     scanLayer.appendChild(staticRing);
 
-    const ping = document.createElementNS(NS, "circle");
+    const ping = document.createElementNS(NS, "ellipse");
     ping.setAttribute("cx", nd.x); ping.setAttribute("cy", nd.y);
-    ping.setAttribute("r", "4"); ping.setAttribute("fill", "none");
+    ping.setAttribute("rx", "4"); ping.setAttribute("ry", "4"); ping.setAttribute("fill", "none");
     ping.setAttribute("stroke", "var(--teal)"); ping.setAttribute("stroke-width", "1.4");
     const anR = document.createElementNS(NS, "animate");
-    anR.setAttribute("attributeName", "r"); anR.setAttribute("values", "4;" + svgR);
+    anR.setAttribute("attributeName", "rx"); anR.setAttribute("values", "4;" + rx);
     anR.setAttribute("dur", "1.8s"); anR.setAttribute("repeatCount", "indefinite");
     const anO = document.createElementNS(NS, "animate");
     anO.setAttribute("attributeName", "opacity"); anO.setAttribute("values", "0.65;0");
     anO.setAttribute("dur", "1.8s"); anO.setAttribute("repeatCount", "indefinite");
-    ping.appendChild(anR); ping.appendChild(anO);
+    const anY = anR.cloneNode();
+    anY.setAttribute("attributeName", "ry"); anY.setAttribute("values", "4;" + ry);
+    ping.appendChild(anR); ping.appendChild(anY); ping.appendChild(anO);
     scanLayer.appendChild(ping);
   }
   document.getElementById("scanToggle").addEventListener("click", function () {
@@ -460,6 +480,7 @@
     if (!data.found) {
       box.innerHTML = '<span class="empty">' + (data.reason === "name_not_found" ? "名字不存在，请检查拼写（可从下拉列表中选择）" : "两个人一点关系没有（网络中不连通）") + '</span>';
       pathEdgeKeys = new Set(); pathNodeIds = new Set();
+      refreshEdgeStyles();
       return;
     }
 
@@ -473,7 +494,7 @@
     box.innerHTML =
       '<div class="kv"><span class="k">最少经过中间人</span><span class="v" style="color:var(--copper);font-weight:600">' + data.intermediaries + ' 人</span></div>' +
       '<div class="taglist">' + data.path.map(function (name, i) {
-        return '<span class="tag' + (i === 0 || i === data.path.length - 1 ? ' teal' : ' copper') + '" data-id="' + nameToId[name] + '">' + name + '</span>';
+        return '<span class="tag' + (i === 0 || i === data.path.length - 1 ? ' teal' : ' copper') + '" data-id="' + nameToId[name] + '">' + escapeHtml(name) + '</span>';
       }).join(' &rarr; ') + '</div>';
     bindTagClicks(box);
     await selectNode(path[0], true);
@@ -510,7 +531,7 @@
     const sel = selectedId !== null ? nodes[selectedId].name : "无";
     document.getElementById("statusbar").innerHTML =
       "<b>节点</b> " + N + " &nbsp; <b>关系</b> " + edges.length +
-      " &nbsp; <b>视图</b> " + modeLabel + " &nbsp; <b>缩放</b> " + scale.toFixed(2) + "x &nbsp; <b>选中</b> " + sel +
+      " &nbsp; <b>视图</b> " + modeLabel + " &nbsp; <b>缩放</b> " + scale.toFixed(2) + "x &nbsp; <b>选中</b> " + escapeHtml(sel) +
       " &nbsp; <b style='color:var(--teal)'>● 已连接后端</b>";
   }
 

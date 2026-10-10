@@ -1,188 +1,92 @@
-//此文件中涉及变量名众多，严格按照阿里巴巴 Java 开发手册要求定义变量名
-//readCSV()
-//
-//        │
-//
-//手动查重(线性遍历)
-//
-//        │
-//
-//Vertex[]（数组手动扩容）
-//
-//        │
-//
-//TupElem[]（数组手动扩容）
-//
-//        │
-//
-//new MatGraphClass(vexs,tup)
-//
-//说明：本文件不使用java.util里的集合框架(ArrayList/HashMap等)，
-//     顶点表、边表都用普通数组实现，容量不够时手动扩容(新建两倍大小的数组再逐个拷贝)
 import java.io.BufferedReader;
-import java.io.FileReader;
 import java.io.IOException;
-//因为代码过于复杂所以先调用ArrayList打个底再第二次修改时换成普通数据结构
-public class GraphLoader {
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 
-    //初始容量，不够会自动翻倍扩容
+/** UTF-8 edge-list loader using arrays and manual capacity growth. */
+public class GraphLoader {
     private static final int INITIAL_CAPACITY = 16;
 
-    //readCSV()
-    public static MatGraphClass readCSV(String fileName)
-    //防止IO错误程序崩溃
-            throws IOException {
-
-        //BufferedReader 是对 FileReader 的封装，通过缓冲区减少 I/O 操作次数，提高读取效率，是 Java IO 流中的典型装饰器结构
-        BufferedReader bufferedReader =
-                new BufferedReader(new FileReader(fileName));
-
-        //顶点建表：用普通数组代替ArrayList，vertexCount记录已用了多少个位置
-        Vertex[] vertexArray = new Vertex[INITIAL_CAPACITY];
+    public static MatGraphClass readCSV(String fileName) throws IOException {
+        Vertex[] vertices = new Vertex[INITIAL_CAPACITY];
+        TupElem[] edges = new TupElem[INITIAL_CAPACITY];
         int vertexCount = 0;
-
-        //边建表：同样用普通数组代替ArrayList
-        TupElem[] edgeArray = new TupElem[INITIAL_CAPACITY];
         int edgeCount = 0;
-
-        String line;
-
-        //注意：表头不要读
-        bufferedReader.readLine();
-
-        while ((line = bufferedReader.readLine()) != null) {
-
-            //拆成数组
-            String[] fields = line.split(",");
-
-            //取出一条边两个端点
-            String sourceVertex = fields[0];
-            String targetVertex = fields[1];
-
-            //csv读出来的是字符串，转换成带一位小数的数值
-            double weightValue = Double.parseDouble(fields[2]);
-
-            //在已有顶点数组里线性查找名字是否已经出现过（代替HashMap查重）
-            //sourceVertex 未出现？
-            //        ↓
-            //数组满了就扩容
-            //        ↓
-            //生成坐标 (x,y)
-            //        ↓
-            //加入 vertexArray，vertexCount++
-            int startIndex = findVertexIndex(vertexArray, vertexCount, sourceVertex);
-
-            if (startIndex == -1) {
-
-                //数组满了先扩容
-                if (vertexCount == vertexArray.length) {
-                    vertexArray = growVertexArray(vertexArray);
+        try (BufferedReader reader = Files.newBufferedReader(Paths.get(fileName), StandardCharsets.UTF_8)) {
+            String header = reader.readLine();
+            if (header == null || header.split(",", -1).length != 3) {
+                throw new IOException("CSV 必须包含三列表头：source,target,weight");
+            }
+            String line;
+            int lineNumber = 1;
+            while ((line = reader.readLine()) != null) {
+                lineNumber++;
+                if (line.trim().isEmpty()) continue;
+                String[] fields = line.split(",", -1);
+                if (fields.length != 3 || fields[0].trim().isEmpty() || fields[1].trim().isEmpty()) {
+                    throw new IOException("CSV 第 " + lineNumber + " 行必须包含非空端点和权重（三列）");
                 }
-
-                double xCoordinate = Math.random() * 100;
-
-                double yCoordinate = Math.random() * 100;
-
-                vertexArray[vertexCount] = new Vertex(sourceVertex, xCoordinate, yCoordinate);
-
-                startIndex = vertexCount;
-                vertexCount++;
+                String source = fields[0].trim();
+                String target = fields[1].trim();
+                if (source.equals(target)) throw new IOException("CSV 第 " + lineNumber + " 行不支持自环");
+                int weight;
+                try {
+                    double value = Double.parseDouble(fields[2].trim());
+                    long rounded = Math.round(value);
+                    if (!Double.isFinite(value) || value <= 0 || rounded < 1 || rounded >= MatGraphClass.INF) {
+                        throw new NumberFormatException();
+                    }
+                    weight = (int) rounded;
+                } catch (NumberFormatException ex) {
+                    throw new IOException("CSV 第 " + lineNumber + " 行权重须为有限正数，四舍五入后在 [1, INF) 内", ex);
+                }
+                int start = findVertexIndex(vertices, vertexCount, source);
+                if (start == -1) {
+                    if (vertexCount == vertices.length) vertices = growVertices(vertices);
+                    start = vertexCount;
+                    vertices[vertexCount++] = createVertex(source);
+                }
+                int end = findVertexIndex(vertices, vertexCount, target);
+                if (end == -1) {
+                    if (vertexCount == vertices.length) vertices = growVertices(vertices);
+                    end = vertexCount;
+                    vertices[vertexCount++] = createVertex(target);
+                }
+                if (edgeCount == edges.length) edges = growEdges(edges);
+                edges[edgeCount++] = new TupElem(start, end, weight);
             }
-
-            // target节点同样处理（必须补，否则会下标找不到）
-            int endIndex = findVertexIndex(vertexArray, vertexCount, targetVertex);
-
-            if (endIndex == -1) {
-
-                if (vertexCount == vertexArray.length)
-                    vertexArray = growVertexArray(vertexArray);
-
-
-                double xCoordinate = Math.random() * 100;
-
-                double yCoordinate = Math.random() * 100;
-
-                vertexArray[vertexCount] = new Vertex(targetVertex, xCoordinate, yCoordinate);
-                endIndex = vertexCount;
-                vertexCount++;
-            }
-
-            int weight = (int) Math.round(weightValue);
-
-            //边数组满了先扩容
-            if (edgeCount == edgeArray.length)
-                edgeArray = growEdgeArray(edgeArray);
-
-            edgeArray[edgeCount] = new TupElem(startIndex, endIndex, weight);
-            edgeCount++;
         }
-
-        //close 必须在 while 外面
-        bufferedReader.close();
-
-        //按实际使用个数裁剪成刚好大小的数组，交给MatGraphClass
-        Vertex[] trimmedVertexArray = trimVertexArray(vertexArray, vertexCount);
-
-        TupElem[] trimmedEdgeArray = trimEdgeArray(edgeArray, edgeCount);
-
-        return new MatGraphClass(trimmedVertexArray, trimmedEdgeArray);
+        if (edgeCount == 0) throw new IOException("CSV 至少需要一条有效关系");
+        Vertex[] trimmedVertices = new Vertex[vertexCount];
+        TupElem[] trimmedEdges = new TupElem[edgeCount];
+        System.arraycopy(vertices, 0, trimmedVertices, 0, vertexCount);
+        System.arraycopy(edges, 0, trimmedEdges, 0, edgeCount);
+        return new MatGraphClass(trimmedVertices, trimmedEdges);
     }
 
-    //在vertexArray的前vertexCount个有效位置里线性查找名字，找到返回下标，找不到返回-1
-    //代替HashMap的查重功能
-    private static int findVertexIndex(
-            Vertex[] vertexArray, int vertexCount, String name) {
+    // Reproducible simulation coordinates, not real geographic data.
+    private static Vertex createVertex(String name) {
+        long hash = Integer.toUnsignedLong(name.hashCode());
+        double x = ((hash * 1103515245L + 12345L) & 0x7fffffffL) % 10001 / 100.0;
+        double y = ((hash * 1664525L + 1013904223L) & 0x7fffffffL) % 10001 / 100.0;
+        return new Vertex(name, x, y);
+    }
 
-        for (int i = 0; i < vertexCount; i++) {
-            if (vertexArray[i].getName().equals(name))
-                return i;
-
+    private static int findVertexIndex(Vertex[] vertices, int count, String name) {
+        for (int i = 0; i < count; i++) {
+            if (vertices[i].getName().equals(name)) return i;
         }
         return -1;
     }
-
-    //顶点数组扩容：新建一个两倍大小的数组，把原来的内容逐个拷贝过去
-    private static Vertex[] growVertexArray(Vertex[] oldArray) {
-
-        Vertex[] newArray = new Vertex[oldArray.length * 2];
-
-        for (int i = 0; i < oldArray.length; i++)
-            newArray[i] = oldArray[i];
-
-        return newArray;
-    }
-
-    //边数组扩容：同理
-    private static TupElem[] growEdgeArray(TupElem[] oldArray) {
-
-        TupElem[] newArray = new TupElem[oldArray.length * 2];
-
-        for (int i = 0; i < oldArray.length; i++)
-            newArray[i] = oldArray[i];
-
-        return newArray;
-    }
-
-    //把顶点数组按实际个数裁剪，去掉扩容后多余的空位置
-    private static Vertex[] trimVertexArray(Vertex[] source, int count) {
-
-        Vertex[] result = new Vertex[count];
-
-        for (int i = 0; i < count; i++)
-            result[i] = source[i];
-
+    private static Vertex[] growVertices(Vertex[] source) {
+        Vertex[] result = new Vertex[source.length * 2];
+        System.arraycopy(source, 0, result, 0, source.length);
         return result;
     }
-
-    //把边数组按实际个数裁剪
-    private static TupElem[] trimEdgeArray(TupElem[] source, int count) {
-
-        TupElem[] result = new TupElem[count];
-
-        for (int i = 0; i < count; i++)
-            result[i] = source[i];
-
+    private static TupElem[] growEdges(TupElem[] source) {
+        TupElem[] result = new TupElem[source.length * 2];
+        System.arraycopy(source, 0, result, 0, source.length);
         return result;
     }
-
 }

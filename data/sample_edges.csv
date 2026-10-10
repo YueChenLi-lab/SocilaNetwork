@@ -1,0 +1,14 @@
+source,target,weight
+jquery,javascript,1
+jquery,css,1
+jquery,html,1
+jquery,ajax,1
+jquery,drupal,1
+javascript,html,1
+javascript,node.js,1
+javascript,ajax,1
+css,html,1
+css,photoshop,1
+node.js,java,1
+java,haskell,1
+haskell,python,1
