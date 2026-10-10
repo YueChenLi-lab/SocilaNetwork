@@ -1,0 +1,86 @@
+### Java build output ###
+*.class
+/target/
+/build/
+out/
+!**/src/main/**/out/
+!**/src/test/**/out/
+.gradle/
+.mvn/timing.properties
+# Keep build scripts, Maven/Gradle configuration and wrapper files.
+!.mvn/wrapper/maven-wrapper.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+### IntelliJ IDEA local state (keep shared project configuration) ###
+.idea/workspace.xml
+.idea/tasks.xml
+.idea/shelf/
+.idea/httpRequests/
+.idea/dataSources/
+.idea/dataSources.local.xml
+.idea/caches/
+.idea/usage.statistics.xml
+.kotlin
+
+### Eclipse ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+!**/src/main/**/bin/
+!**/src/test/**/bin/
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+### VS Code ###
+.vscode/
+
+### Caches, logs and temporary files ###
+.cache/
+node_modules/
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+### Credentials and local secrets ###
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+credentials.json
+credentials*.json
+client_secret*.json
+service-account*.json
+secrets.properties
+secrets.yml
+secrets.yaml
+.aws/
+.ssh/
+
+### OS files ###
+.DS_Store
+Thumbs.db
+Desktop.ini
