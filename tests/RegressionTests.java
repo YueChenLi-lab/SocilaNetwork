@@ -106,12 +106,14 @@ public class RegressionTests {
             check(body.contains("q\\\"\\\\node"), "JSON must escape quotes and backslashes");
             check(request(client, base, "/api/path?a=" + name + "&b=D", "GET").body().contains("\"intermediaries\": 1"), "Names containing query delimiters must be decoded exactly once");
             check(request(client, base, "/api/path?a=" + name + "&b=" + name, "GET").body().contains("\"intermediaries\": 0"), "Same-node path should have zero intermediaries");
+            check(request(client, base, "/api/path?a=B&b=" + URLEncoder.encode("孤立", StandardCharsets.UTF_8), "GET").body().contains("\"reason\": \"no_path\""), "Disconnected nodes report no_path through HTTP");
             check(request(client, base, "/api/circle?name=" + name, "GET").body().contains("\"found\": true"), "Circle endpoint supports encoded names");
             check(request(client, base, "/api/nearby?name=" + name + "&radius=5", "GET").body().contains("\"oneIntermediary\": [\"D\"]"), "Two-hop expansion excludes direct contacts");
             check(request(client, base, "/api/classify", "GET").body().contains("\"core\""), "Classification endpoint is available");
             for (String radius : new String[] { "bad", "NaN", "Infinity", "-1" }) {
                 check(request(client, base, "/api/nearby?name=" + name + "&radius=" + radius, "GET").statusCode() == 400, "Invalid radius must be a client error");
             }
+            check(request(client, base, "/api/nearby?name=" + name, "GET").statusCode() == 400, "Known-node nearby query requires a radius");
             check(request(client, base, "/api/move?name=B&x=2&y=NaN", "POST").statusCode() == 400 && g.vexs[1].getX() == 3, "Invalid second coordinate must not partly update first");
             check(request(client, base, "/api/move?name=missing&x=2&y=3", "POST").statusCode() == 404, "Missing node must not report movement success");
             check(request(client, base, "/api/move?name=B&x=2&y=3", "GET").statusCode() == 405, "Moving coordinates requires POST");

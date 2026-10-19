@@ -52,8 +52,11 @@ body{display:flex; flex-direction:column;}
 .iconbtn:hover{border-color:var(--cyan-dim); color:var(--cyan);}
 #hint{
   margin-left:auto; font-family:var(--mono); font-size:11px; color:var(--muted2); letter-spacing:.3px;
-  white-space:nowrap;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0;
 }
+#viewSeg,.iconbtn{flex-shrink:0;}
+#moveStatus{flex:0 0 auto;padding:6px 18px;font-size:12px;color:var(--text);background:var(--panel);}
+@media(max-width:1100px){#topbar .brand span,#hint{display:none;}}
 #hint kbd{
   background:var(--panel2); border:1px solid var(--border); border-radius:3px; padding:1px 5px;
   color:var(--muted); font-size:10px;
@@ -183,13 +186,14 @@ input[type=range]{width:100%; accent-color:var(--cyan); margin:6px 0;}
   <div class="brand">SOCIAL·NET <span>/ 关系遥测终端</span></div>
   <div class="seg" id="viewSeg">
     <button data-view="topo" class="active">拓扑视图</button>
-    <button data-view="geo">地理视图</button>
+    <button data-view="geo">模拟位置</button>
   </div>
   <div class="iconbtn" id="zoomIn" title="放大 (+)">+</div>
   <div class="iconbtn" id="zoomOut" title="缩小 (-)">&minus;</div>
   <div class="iconbtn" id="zoomReset" title="重置视图 (Esc)">&#8635;</div>
   <div id="hint">拖拽平移 · 滚轮缩放 · 拖节点重新排布 · <kbd>&larr;&uarr;&rarr;&darr;</kbd>平移 · <kbd>+/-</kbd>缩放 · <kbd>/</kbd>搜索 · <kbd>Esc</kbd>清除</div>
 </div>
+<div id="moveStatus" role="status" aria-live="polite">拓扑拖动仅改变显示布局；模拟位置拖动在松开鼠标后保存到 Java 内存。</div>
 
 <div id="main">
   <div id="canvasWrap">
@@ -220,7 +224,7 @@ input[type=range]{width:100%; accent-color:var(--cyan); margin:6px 0;}
         <input type="text" id="pathB" list="nameList" placeholder="输入或点击图中节点">
         <datalist id="nameList"></datalist>
         <button class="action" id="btnPath" style="margin-top:10px">查找最短联系路径</button>
-        <div id="pathResult" style="margin-top:10px"></div>
+        <div id="pathResult" aria-live="polite" style="margin-top:10px"></div>
       </div>
     </div>
 
@@ -243,8 +247,9 @@ input[type=range]{width:100%; accent-color:var(--cyan); margin:6px 0;}
         </div>
         <label class="small">搜索半径：<span id="radiusVal">15</span></label>
         <input type="range" id="radiusSlider" min="3" max="60" value="15">
-        <div style="font-size:10.5px;color:var(--muted2);margin:4px 0 8px">地理视图下拖动节点可模拟"位置移动"，附近列表会实时刷新</div>
-        <div id="nearbyBody"><span class="empty">先在图中选中一个节点</span></div>
+        <div style="font-size:10.5px;color:var(--muted2);margin:4px 0 8px">模拟位置视图中松开拖动后保存并刷新附近列表；关系边不变。</div>
+        <button class="action" id="btnRefreshNearby" style="margin-bottom:8px">刷新附近列表 / 重试</button>
+        <div id="nearbyBody" aria-live="polite"><span class="empty">先在图中选中一个节点</span></div>
       </div>
     </div>
 

@@ -10,16 +10,16 @@
 
 | 能力 | 实现与价值 | 如何验证 |
 | --- | --- | --- |
-| 数据结构可解释 | 数组手动扩容、邻接矩阵、队列与前驱数组直接实现，便于追踪算法执行 | 阅读 `GraphLoader`、`MatGraphClass`、`PathFinder` |
+| 数据结构可解释 | 数组手动扩容、邻接矩阵、队列与前驱数组直接实现，便于追踪算法执行 | 在 `PathFinder.findShortestPath` 中对 `front/rear/pre` 下断点；对照 [数组与 BFS 讲解](docs/project-guide.md#算法如何讲清楚) |
 | 最少转介路径 | BFS 找到最少边数的路径，同时展示路径节点和中间人数 | 查询 `photoshop → jquery`，中间人为 `css` |
 | 关系扩展 | 区分直接联系人与经一个中间人可达的新增节点，避免重复算入已有联系人 | 选中 `photoshop`：直接联系 `css`；两跳新增 `jquery`、`html` |
-| 拓扑与位置分开 | 力导向布局帮助观察关系；位置视图根据模拟坐标进行半径查询 | 拖动位置后重新查询附近节点，关系边保持不变 |
+| 拓扑与位置分开 | 力导向布局帮助观察关系；位置视图根据模拟坐标进行半径查询 | 拓扑拖动不会发出 `/api/move`；模拟位置拖动松开后发送 POST，附近列表刷新，关系边与度数不变 |
 | Java 与网页连通 | 同源 HTTP 服务提供六类 API；前端负责交互和渲染，后端负责分析 | 浏览器网络面板检查 `/api/path`、`/api/nearby` |
-| 易于复现 | JDK 自带 HTTP 服务，无第三方 Java 依赖；附启动脚本、示例数据和回归检查 | 克隆后运行脚本，无需寻找本机桌面上的 CSV |
+| 易于复现 | JDK 自带 HTTP 服务，无第三方 Java 依赖；附启动脚本、示例数据和回归检查 | 同一示例重复启动可核对 11 节点、13 关系、`photoshop → css → jquery`、3/5/3 分组及相同初始模拟坐标 |
 
 ## 快速启动
 
-需要 **JDK 17 或更新版本**，并确保 `java` 在 PATH 中。端口默认 `8080`。无需 Maven、Gradle 或 npm。
+需要 **完整 JDK 17 或更新版本**（包含 `jdk.compiler`，仅 JRE 不够）。脚本优先使用 `JAVA_HOME`，未设置时使用 PATH 中的 `java`；两种脚本都按 Java 17 目标编译。端口默认 `8080`。运行应用无需 Maven、Gradle 或 npm。
 
 ### Windows PowerShell
 
@@ -28,6 +28,16 @@
 ```powershell
 .\scripts\run.ps1
 ```
+
+若 PATH 中是旧 Java 或 JRE，先设置正确的 JDK 安装目录；路径含空格时保留引号（请替换为本机实际目录）：
+
+```powershell
+$env:JAVA_HOME = 'C:\Program Files\Eclipse Adoptium\jdk-17'
+.\scripts\run.ps1 -Verify
+.\scripts\run.ps1
+```
+
+不要把 `JAVA_HOME` 指向 `bin`。若执行策略阻止本地脚本，可在遵循本机策略的前提下使用本次进程设置：`powershell -NoProfile -ExecutionPolicy RemoteSigned -File .\scripts\run.ps1`。
 
 ### Linux / macOS
 
@@ -40,14 +50,22 @@ bash scripts/run.sh
 使用自己的数据和其他端口：
 
 ```powershell
-.\scripts\run.ps1 -CsvPath "D:\Desktop\stackoverflow_edges.csv" -Port 8081
+.\scripts\run.ps1 -CsvPath "D:\课程 项目\数据 样本.csv" -Port 8081
 ```
 
 ```bash
-bash scripts/run.sh /path/to/edges.csv 8081
+bash scripts/run.sh "/path/with spaces/数据 样本.csv" 8081
 ```
 
-在 IntelliJ IDEA 中，可直接运行 `src/WebMain.java`，工作目录设为项目根目录，程序参数填写 `[CSV路径] [端口]`。不填参数则使用仓库示例。IDEA 项目原有 JDK 配置为 25；本项目源码在 JDK 17 上通过验证，可在本机项目设置中选择已安装的 JDK。
+显式传入的相对 CSV 路径按**调用者当前目录**解析；未传入时始终使用仓库示例。因此可从其他目录调用脚本：
+
+```powershell
+& 'D:\课程 项目\SocilaNetwork\scripts\run.ps1' -CsvPath '.\数据 样本.csv' -Port 8081
+```
+
+IntelliJ IDEA：打开项目根目录，在 **Project Structure → Project SDK** 选择本机完整 JDK 17+，语言级别选 17，模块 SDK 继承项目 SDK。共享配置已从 JDK 25 调整为 17；SDK 名称只是 IDEA 的本机引用，不会安装 JDK。运行 `src/WebMain.java`，Working directory 填 `$PROJECT_DIR$`（此字段不加引号），JRE 选 Project SDK。Program arguments 留空使用示例，或填写 `"D:\课程 项目\数据 样本.csv" 8081`。完整排查步骤见 [IDEA 与 Windows 检查](docs/project-guide.md#idea-与-windows-启动检查)。
+
+`JAVA_HOME` 控制脚本，IDEA 的 Project SDK/JRE 控制 IDE 运行；两处请选同一个安装目录。
 
 ### 两种展示入口
 
@@ -105,6 +123,21 @@ bash scripts/run.sh --verify
 
 检查覆盖最少跳数与加权路径的区别、断连／同节点路径、两跳排除直接联系人、重复边合并、数组扩容、UTF-8 和异常 CSV、带特殊字符的 API 节点名、非法半径、移动原子校验，以及主页是否接入真实 Java API。
 
+可选的真实浏览器回归需要 Node.js 22+ 和 Chromium/Chrome，无需 npm 安装。先运行上面的 `-Verify` / `--verify` 编译 Java，再执行：
+
+```bash
+node tests/browser-flow.mjs
+```
+
+Linux 默认查找 `chromium`；Windows 请指定浏览器实际路径：
+
+```powershell
+$env:BROWSER_PATH = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
+node tests/browser-flow.mjs
+```
+
+此检查自行启动临时 Java 服务和浏览器，验证真实鼠标／键盘交互、六类 Java API、延迟查询、保存失败与重试；退出后停止它启动的进程。截图和结果写入忽略的 `out/browser/`。最新实测环境、结果与 Windows 限制见 [验证记录](docs/verification.md)。
+
 已有控制台演示可在编译后运行：
 
 ```bash
@@ -113,6 +146,19 @@ java -cp out TestCase456
 ```
 
 完整演示步骤、API 参数和后续方向见 [项目说明](docs/project-guide.md)。
+
+## 同步回已有 IDEA 项目
+
+先在本地项目目录执行 `git status`，将未提交改动提交或暂存（需要包含未跟踪文件时使用 `git stash push -u`），再获取后续分支：
+
+```bash
+git fetch origin
+git switch --track origin/codex/project-showcase-followup
+```
+
+如果本地已有该分支，用 `git switch codex/project-showcase-followup`，随后 `git pull --ff-only`。后续 PR 合并后可改用 `git switch main` 和 `git pull --ff-only`。不要把远端旧的 `codex/project-showcase` 当作本次修复分支。
+
+回到 IDEA 重新加载外部修改，核对 Project SDK/JRE 和 `$PROJECT_DIR$` 工作目录，再执行脚本回归或运行 `WebMain`。若此前暂存了改动，恢复前先检查是否与这些文件冲突，保留本地修改。
 
 ## 当前边界
 
